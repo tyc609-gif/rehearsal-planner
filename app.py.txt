@@ -1,0 +1,444 @@
+import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from fpdf import FPDF
+import datetime
+from datetime import timedelta, date
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from googleapiclient.discovery import build
+from google.oauth2 import service_account
+import pytz
+import os
+
+# Timezone for Hong Kong
+TZ = pytz.timezone('Asia/Hong_Kong')
+
+# Setup Google Sheets credentials
+SCOPE_SHEETS = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+if os.path.exists('credentials.json'):
+    CREDS_SHEETS = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', SCOPE_SHEETS)
+    GC = gspread.authorize(CREDS_SHEETS)
+else:
+    GC = None
+    st.error("credentials.json not found. Please set up as per guide.")
+
+# Setup Google Calendar credentials
+SCOPE_CALENDAR = ['https://www.googleapis.com/auth/calendar']
+if os.path.exists('credentials.json'):
+    CREDS_CALENDAR = service_account.Credentials.from_service_account_file('credentials.json', scopes=SCOPE_CALENDAR)
+    CALENDAR_SERVICE = build('calendar', 'v3', credentials=CREDS_CALENDAR)
+else:
+    CALENDAR_SERVICE = None
+
+# Initialize session state
+if 'projects' not in st.session_state:
+    st.session_state.projects = {}
+if 'current_project' not in st.session_state:
+    st.session_state.current_project = None
+
+# Helper functions
+def generate_dates(start_date, end_date):
+    dates = []
+    current = start_date
+    while current <= end_date:
+        dates.append(current)
+        current += timedelta(days=1)
+    return dates
+
+def generate_time_slots(granularity):
+    times = []
+    start = datetime.time(9, 0)
+    end = datetime.time(23, 0)
+    delta = timedelta(minutes=granularity)
+    current = datetime.datetime.combine(date.today(), start)
+    while current.time() <= end:
+        times.append(current.time().strftime('%H:%M'))
+        current += delta
+    return times
+
+def parse_datetime(dt_str):
+    try:
+        dt = datetime.datetime.strptime(dt_str, '%Y-%m-%d %H:%M')
+        return TZ.localize(dt)
+    except:
+        return None
+
+def is_available(actor, slot_start, slot_end, availability):
+    if actor not in availability:
+        return False
+    unavails = availability[actor]
+    for u_start, u_end in unavails:
+        if u_start < slot_end and u_end > slot_start:
+            return False
+    return True
+
+def get_required_actors(selected_scenes, scenes_df, casting_df):
+    required_actors = set()
+    for scene in selected_scenes:
+        roles_str = scenes_df.loc[scenes_df['Scene Name'] == scene, 'Required Roles'].values[0]
+        roles = [r.strip() for r in roles_str.split(',')]
+        for role in roles:
+            actor_row = casting_df[casting_df['Role Name'] == role]
+            if not actor_row.empty:
+                required_actors.add(actor_row['Actor Name'].values[0])
+    return required_actors
+
+def style_grid(df, selected_scenes, scenes_df, casting_df, dates, times, actors, granularity, availability):
+    def style_func(val, row_idx, col_idx):
+        date_idx = row_idx
+        time_idx = col_idx // len(actors)
+        actor_idx = col_idx % len(actors)
+        actor = actors[actor_idx]
+        dt = dates[date_idx]
+        time_str = times[time_idx]
+        slot_start = TZ.localize(datetime.datetime.combine(dt, datetime.time.fromisoformat(time_str + ':00')))
+        slot_end = slot_start + timedelta(minutes=granularity)
+        
+        avail = is_available(actor, slot_start, slot_end, availability)
+        color = 'green' if avail else 'red'
+        bg = ''
+        
+        if selected_scenes:
+            required_actors = get_required_actors(selected_scenes, scenes_df, casting_df)
+            if required_actors and all(is_available(a, slot_start, slot_end, availability) for a in required_actors):
+                bg = 'background-color: yellow;'
+        
+        symbol = '✓' if avail else '✗'
+        return f'color: {color}; {bg} font-weight: bold;' if bg else f'color: {color};'
+
+    styled = df.style.apply(lambda s: [style_func(s.iloc[i], i, j) for j in range(len(s)) for i in range(len(df))], axis=None)
+    return styled
+
+# Main app
+st.title("Rehearsal Planning Assistant")
+
+# Sidebar navigation
+with st.sidebar:
+    st.header("Navigation")
+    sections = [
+        "Project Management",
+        "Availability Refresh",
+        "Casting Table",
+        "Scene Breakdown",
+        "Venue List",
+        "Grid Settings",
+        "Availability Grid",
+        "Add/Edit Sessions",
+        "Progress Dashboard",
+        "Export PDF",
+        "Sync Calendar"
+    ]
+    current_section = st.selectbox("Select Section", sections)
+
+# Project Management
+if current_section == "Project Management":
+    st.header("Project Management")
+    
+    # Create new project
+    with st.form("create_project"):
+        project_name = st.text_input("Project Name")
+        start_date = st.date_input("Start Date")
+        end_date = st.date_input("End Date")
+        sheet_id = st.text_input("Google Sheet ID")
+        calendar_id = st.text_input("Google Calendar ID")
+        submitted = st.form_submit_button("Create Project")
+        if submitted and project_name not in st.session_state.projects:
+            st.session_state.projects[project_name] = {
+                'name': project_name,
+                'start_date': start_date,
+                'end_date': end_date,
+                'sheet_id': sheet_id,
+                'calendar_id': calendar_id,
+                'actors': [],
+                'availability': {},
+                'casting_df': pd.DataFrame(columns=['Role Name', 'Actor Name']),
+                'scenes_df': pd.DataFrame(columns=['Scene ID', 'Scene Name', 'Required Roles', 'Target Total Rehearsal Hours']),
+                'venues': [],
+                'sessions_df': pd.DataFrame(columns=['Date', 'Start Time', 'End Time', 'Scenes', 'Venue', 'Notes']),
+                'granularity': 30
+            }
+            st.success(f"Project {project_name} created.")
+
+    # Select project
+    project_list = list(st.session_state.projects.keys())
+    selected_project = st.selectbox("Select Project", project_list)
+    if selected_project:
+        st.session_state.current_project = st.session_state.projects[selected_project]
+        st.info(f"Current Project: {selected_project}")
+        
+        # Edit project details
+        with st.form("edit_project"):
+            new_start = st.date_input("Edit Start Date", st.session_state.current_project['start_date'])
+            new_end = st.date_input("Edit End Date", st.session_state.current_project['end_date'])
+            new_sheet = st.text_input("Edit Sheet ID", st.session_state.current_project['sheet_id'])
+            new_cal = st.text_input("Edit Calendar ID", st.session_state.current_project['calendar_id'])
+            submitted_edit = st.form_submit_button("Update Project")
+            if submitted_edit:
+                st.session_state.current_project['start_date'] = new_start
+                st.session_state.current_project['end_date'] = new_end
+                st.session_state.current_project['sheet_id'] = new_sheet
+                st.session_state.current_project['calendar_id'] = new_cal
+                st.success("Project updated.")
+
+# Require current project for other sections
+if st.session_state.current_project is None and current_section != "Project Management":
+    st.warning("Please select or create a project first.")
+else:
+    project = st.session_state.current_project
+
+    # Availability Refresh
+    if current_section == "Availability Refresh":
+        st.header("Availability Refresh")
+        if GC:
+            if st.button("Refresh Availability"):
+                sheet = GC.open_by_key(project['sheet_id']).sheet1
+                data = sheet.get_all_records()
+                avail_df = pd.DataFrame(data)
+                actors = avail_df['Actor Name'].unique().tolist()
+                availability = {}
+                for actor in actors:
+                    actor_rows = avail_df[avail_df['Actor Name'] == actor]
+                    unavails = []
+                    for _, row in actor_rows.iterrows():
+                        start = parse_datetime(row['Unavailable Start (YYYY-MM-DD HH:MM)'])
+                        end = parse_datetime(row['Unavailable End (YYYY-MM-DD HH:MM)'])
+                        if start and end:
+                            unavails.append((start, end))
+                    availability[actor] = unavails
+                project['actors'] = actors
+                project['availability'] = availability
+                st.success("Availability refreshed.")
+        else:
+            st.error("Google Sheets setup incomplete.")
+
+    # Casting Table
+    if current_section == "Casting Table":
+        st.header("Casting Table")
+        actors = project.get('actors', [])
+        if not actors:
+            st.warning("Refresh availability first to get actors.")
+        column_config = {
+            'Actor Name': st.column_config.SelectboxColumn(options=actors, required=True)
+        }
+        edited_df = st.data_editor(
+            project['casting_df'],
+            num_rows="dynamic",
+            column_config=column_config,
+            use_container_width=True
+        )
+        project['casting_df'] = edited_df
+
+    # Scene Breakdown
+    if current_section == "Scene Breakdown":
+        st.header("Scene Breakdown")
+        column_config = {
+            'Required Roles': st.column_config.TextColumn(help="Comma-separated role names"),
+            'Target Total Rehearsal Hours': st.column_config.NumberColumn()
+        }
+        edited_df = st.data_editor(
+            project['scenes_df'],
+            num_rows="dynamic",
+            column_config=column_config,
+            use_container_width=True
+        )
+        project['scenes_df'] = edited_df
+
+    # Venue List
+    if current_section == "Venue List":
+        st.header("Venue List")
+        venues = project['venues']
+        new_venue = st.text_input("Add New Venue")
+        if st.button("Add Venue") and new_venue not in venues:
+            venues.append(new_venue)
+            st.success(f"Venue {new_venue} added.")
+        st.write("Current Venues:")
+        for v in venues:
+            st.write(v)
+        # To remove, select and delete
+        remove_venue = st.selectbox("Remove Venue", venues)
+        if st.button("Remove Selected"):
+            venues.remove(remove_venue)
+            st.success("Venue removed.")
+
+    # Grid Settings
+    if current_section == "Grid Settings":
+        st.header("Grid Settings")
+        granularity = st.selectbox("Time Slot Granularity (minutes)", [15, 30, 60], index=[15,30,60].index(project['granularity']))
+        project['granularity'] = granularity
+
+    # Availability Grid
+    if current_section == "Availability Grid":
+        st.header("Availability Grid")
+        if not project.get('availability'):
+            st.warning("Refresh availability first.")
+        else:
+            dates = generate_dates(project['start_date'], project['end_date'])
+            times = generate_time_slots(project['granularity'])
+            actors = project['actors']
+            multi_columns = pd.MultiIndex.from_product([times, actors])
+            df = pd.DataFrame(index=[d.strftime('%Y-%m-%d') for d in dates], columns=multi_columns)
+            
+            # Fill with symbols (but styling will override display)
+            for d_idx, dt in enumerate(dates):
+                for t_idx, time_str in enumerate(times):
+                    slot_start = TZ.localize(datetime.datetime.combine(dt, datetime.time.fromisoformat(time_str + ':00')))
+                    slot_end = slot_start + timedelta(minutes=project['granularity'])
+                    for a_idx, actor in enumerate(actors):
+                        avail = is_available(actor, slot_start, slot_end, project['availability'])
+                        df.iloc[d_idx, t_idx * len(actors) + a_idx] = '✓' if avail else '✗'
+            
+            selected_scenes = st.multiselect("Select Scenes to Filter", project['scenes_df']['Scene Name'].tolist())
+            styled_df = style_grid(df, selected_scenes, project['scenes_df'], project['casting_df'], dates, times, actors, project['granularity'], project['availability'])
+            st.dataframe(styled_df, use_container_width=True)
+
+    # Add/Edit Sessions
+    if current_section == "Add/Edit Sessions":
+        st.header("Add/Edit Sessions")
+        
+        # Add Session Form
+        with st.form("add_session"):
+            sess_date = st.date_input("Date", min_value=project['start_date'], max_value=project['end_date'])
+            start_time = st.time_input("Start Time", value=datetime.time(9,0))
+            end_time = st.time_input("End Time", value=datetime.time(10,0))
+            scenes = st.multiselect("Scenes", project['scenes_df']['Scene Name'].tolist())
+            venue = st.selectbox("Venue", project['venues'])
+            notes = st.text_area("Notes")
+            submitted = st.form_submit_button("Add Session")
+            if submitted:
+                if venue:
+                    new_row = {
+                        'Date': sess_date.strftime('%Y-%m-%d'),
+                        'Start Time': start_time.strftime('%H:%M'),
+                        'End Time': end_time.strftime('%H:%M'),
+                        'Scenes': ','.join(scenes),
+                        'Venue': venue,
+                        'Notes': notes
+                    }
+                    project['sessions_df'] = pd.concat([project['sessions_df'], pd.DataFrame([new_row])], ignore_index=True)
+                    st.success("Session added.")
+                else:
+                    st.error("Venue is required.")
+
+        # Edit Sessions
+        edited_sessions = st.data_editor(project['sessions_df'], num_rows="dynamic", use_container_width=True)
+        project['sessions_df'] = edited_sessions
+
+    # Progress Dashboard
+    if current_section == "Progress Dashboard":
+        st.header("Progress Dashboard")
+        if project['scenes_df'].empty:
+            st.warning("Add scenes first.")
+        else:
+            scenes = project['scenes_df']['Scene Name'].tolist()
+            targets = project['scenes_df'].set_index('Scene Name')['Target Total Rehearsal Hours'].to_dict()
+            actuals = {s: 0.0 for s in scenes}
+            
+            for _, row in project['sessions_df'].iterrows():
+                sess_scenes = row['Scenes'].split(',')
+                duration = (datetime.datetime.strptime(row['End Time'], '%H:%M') - datetime.datetime.strptime(row['Start Time'], '%H:%M')).total_seconds() / 3600.0
+                for s in sess_scenes:
+                    if s in actuals:
+                        actuals[s] += duration
+            
+            progress_df = pd.DataFrame({
+                'Scene': scenes,
+                'Target': [targets[s] for s in scenes],
+                'Actual': [actuals[s] for s in scenes]
+            })
+            progress_df['Percentage'] = (progress_df['Actual'] / progress_df['Target']) * 100
+            progress_df['Status'] = progress_df['Percentage'].apply(lambda p: 'red' if p < 60 else 'orange' if p < 80 else 'green')
+            
+            # Bar chart
+            fig, ax = plt.subplots()
+            sns.barplot(data=progress_df.melt(id_vars='Scene', value_vars=['Target', 'Actual']), x='value', y='Scene', hue='variable', ax=ax)
+            st.pyplot(fig)
+            
+            st.dataframe(progress_df)
+            
+            # Suggestions
+            under = progress_df[progress_df['Percentage'] < 80]['Scene'].tolist()
+            if under:
+                st.info(f"Suggested to schedule more for: {', '.join(under)}")
+
+    # Export PDF
+    if current_section == "Export PDF":
+        st.header("Export PDF")
+        if st.button("Generate PDF"):
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size=12)
+            pdf.cell(200, 10, txt=f"Project: {project['name']}", ln=1, align='C')
+            
+            # Progress summary
+            # Similar to dashboard, but text
+            pdf.cell(200, 10, txt="Progress Summary:", ln=1)
+            # Add progress_df to pdf
+            for _, row in progress_df.iterrows():  # Assuming progress_df from above, but compute again if needed
+                pdf.cell(200, 10, txt=f"{row['Scene']}: Actual {row['Actual']}/{row['Target']} ({row['Percentage']:.1f}%)", ln=1)
+            
+            # Schedule
+            pdf.cell(200, 10, txt="Schedule:", ln=1)
+            sessions_sorted = project['sessions_df'].sort_values('Date')
+            current_week = None
+            for _, row in sessions_sorted.iterrows():
+                sess_date = datetime.datetime.strptime(row['Date'], '%Y-%m-%d')
+                week = sess_date.isocalendar()[1]
+                if week != current_week:
+                    pdf.cell(200, 10, txt=f"Week {week}", ln=1)
+                    current_week = week
+                day = sess_date.strftime('%A')
+                duration = (datetime.datetime.strptime(row['End Time'], '%H:%M') - datetime.datetime.strptime(row['Start Time'], '%H:%M')).total_seconds() / 3600.0
+                scenes = row['Scenes']
+                # Resolve actors
+                req_actors = get_required_actors(scenes.split(','), project['scenes_df'], project['casting_df'])
+                actors_str = ', '.join(req_actors)
+                line = f"{row['Date']} {day}, {row['Start Time']}-{row['End Time']} ({duration}h), Scenes: {scenes}, Actors: {actors_str}, Venue: {row['Venue']}, Notes: {row['Notes']}"
+                pdf.cell(200, 10, txt=line, ln=1)
+            
+            pdf_output = f"{project['name']}_schedule.pdf"
+            pdf.output(pdf_output)
+            with open(pdf_output, "rb") as f:
+                st.download_button("Download PDF", f, file_name=pdf_output)
+
+    # Sync Calendar
+    if current_section == "Sync Calendar":
+        st.header("Sync to Google Calendar")
+        clear_previous = st.checkbox("Clear previous rehearsal events")
+        if st.button("Sync Now"):
+            if CALENDAR_SERVICE:
+                cal_id = project['calendar_id']
+                
+                # Clear previous if checked
+                if clear_previous:
+                    start_dt = TZ.localize(datetime.datetime.combine(project['start_date'], datetime.time(0,0)))
+                    end_dt = TZ.localize(datetime.datetime.combine(project['end_date'], datetime.time(23,59)))
+                    events_result = CALENDAR_SERVICE.events().list(calendarId=cal_id, timeMin=start_dt.isoformat(), timeMax=end_dt.isoformat(), singleEvents=True).execute()
+                    events = events_result.get('items', [])
+                    for event in events:
+                        if event['summary'].startswith("Rehearsal"):
+                            CALENDAR_SERVICE.events().delete(calendarId=cal_id, eventId=event['id']).execute()
+                    st.info("Previous events cleared.")
+                
+                # Add new events
+                for _, row in project['sessions_df'].iterrows():
+                    sess_date = datetime.date.fromisoformat(row['Date'])
+                    start_time = datetime.time.fromisoformat(row['Start Time'] + ':00')
+                    end_time = datetime.time.fromisoformat(row['End Time'] + ':00')
+                    start_dt = TZ.localize(datetime.datetime.combine(sess_date, start_time))
+                    end_dt = TZ.localize(datetime.datetime.combine(sess_date, end_time))
+                    scenes = row['Scenes']
+                    req_actors = get_required_actors(scenes.split(','), project['scenes_df'], project['casting_df'])
+                    actors_str = ', '.join(req_actors)
+                    event = {
+                        'summary': f"Rehearsal – {scenes}",
+                        'location': row['Venue'],
+                        'description': f"Actors: {actors_str}\nNotes: {row['Notes']}",
+                        'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'Asia/Hong_Kong'},
+                        'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Hong_Kong'},
+                    }
+                    CALENDAR_SERVICE.events().insert(calendarId=cal_id, body=event).execute()
+                st.success("Calendar synced.")
+            else:
+                st.error("Google Calendar setup incomplete.")
