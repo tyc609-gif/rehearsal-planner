@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "rehearsal-planner-482207",
+  "private_key_id": "f78978b0d722a29edde0012d815b273f10ab6760",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDfk8/6agBdQ0+x\nhCwk/K8pCKT0ge3O4Oj5aWEVcgEZa2e/Qkdz23HTdx18vFJEaxS9sirhWUp673p3\nFl2x1DEhfsDcQoiK13XIBRhZzzm7CcJnZmh1TYcmyZnD+e20G6dUz0rAHpU8VhLB\nppB6h2l6oXeMqVFSf4P3bLpukl9fjt2QN7E3Ddehk0OhAoxHp63ngePBIR1Lk3Dz\nXGmtShAMLTOEHcwDFGFJRknJQ5yuxYUtpWHuXVMM04GWmxuvDcmZ6euPH7JVgMqI\nHyjNfhrXD6KJK9+hWRY/iU61aWuuNeIOfX39fICWvt6oYmqEtUx9I+XKddA/3B0S\nb7RK96WLAgMBAAECggEAZosqgE2e9ieZxS78ekhk5DqhQb3X/yNb540EKKxdwbVn\n46p4EDTtm5JN9XiAeP3uCOVPUoU8Km9tKXKaLaZHlHfI6B0h+CBDVqazmPl5Hoam\n4frv3SFeZBViD6cxdYKbeEQNIlnEk+RcfPIy4Of7onGtXdgIwwBWXCTDy1QaJz6J\nHs3d9e20SKWPvLiT2DOjmxgVZeDSZDloF5eXTCEJqrOjALavDfItZ3TUvoRWW1XT\nG1FfFs9fJO8rzyyHmL4Ru3uhMEq9nZM0Z0DdQfkk0VLCLGxpE5hFKwuPE5vB6kjq\nEh7cKC6le7aDSdEq6UAB80DnZvc9gB5e0wj9gJaWrQKBgQD9mmXPMcFcd3+r7Y/i\ndUI7+CzI26S8QnSvaPj8XaTYiSSKNAOht/xl5VC36wwWSHK1K4dsGq4xHhlvjsE/\nr9z1KBR4CSRGGqsFY9V1T4MdKz8vsr6LMrS9rW5DBzTRvYlPeT2TXXC1y6nmhz6D\njQN/QrTcTSVCPwREb818GGQzZQKBgQDhsMQvjNl8iW1GUj1UwSIMsdCESXdRXDYG\neIBvl3spubnE6rjGL8dQFpHtOVdFrOVSbqQ/n24ZZoH0tpGZ5W40s0PEVtjOrR0u\n2glryorZREWBukDGSbo/rqJ+ndVfEWJRBV1L/gaKSe8vTnd1NvDAWDArZmQEBVDG\nlKRruAT+LwKBgB2yCJ3cW6HyNDbzmFeSF3FiPAxA++c3eOZZSl5ysKzSUj8EnDBB\nlQJxeaQvl7i8PwJL2I2mCiOiPKQ9eQ92Dk9+o/bySxcSZFg7OnGEH/w4Ziu1qG4w\nP82+Ex0yKNMueHef4L/yvxHqiTh/Oai5yGEMdJUfS2+YZW2GEe+oA4OpAoGBAMB1\nbCecdg60ZsIz+WcgN3gZ3lYhDCYOe2ezNNt0kyv23IsnGqCvN8l9Jb3lSx34napY\n/anfvBTfDG1xjuJs+zjnsh9pbAN7Lsq4VpZcJ2G1zYweF4TAdJo/wwQ0djNW8L9k\n0rWuD0e4Wsa9pDMJwe5UhedMrnebTNG7CidtypwzAoGBAMabjDjmWXOukuHFv8zx\n49UB68hN4j/5ulnuzgTyXknyjhcoNfoOfLTfJsKA+b/7s2NFUzFZqXTOXr7jb+Cv\n52lFjSywEiWHS4LV0ZKtMJGW9uSZhIs7h2ZzG4eMs1iG1fsxElIxOj83wXC8sBX/\nw4HVI9gHz4HN6qM5Lcq+9r8H\n-----END PRIVATE KEY-----\n",
+  "client_email": "rehearsal-scheduler@rehearsal-planner-482207.iam.gserviceaccount.com",
+  "client_id": "109503455197709937549",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/rehearsal-scheduler%40rehearsal-planner-482207.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
